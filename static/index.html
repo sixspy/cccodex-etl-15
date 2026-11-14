@@ -11,13 +11,26 @@
   <div id="app" class="shell">
     <header class="top">
       <h1>抽取转换加载台</h1>
-      <span class="who">{{ me }}</span>
+      <span class="who">{{ me }} · {{ role }}</span>
+      <span class="tag" :class="policyOn ? 'ok' : 'warn'">幂等：{{ overview.policy_label || "未设置" }}</span>
       <button class="ghost" @click="logout">退出</button>
     </header>
-    <p class="muted">基线能力：管道列表、抽取、落库。后续题面在此叠加增量水位、清洗规则、并发争用等。</p>
+
+    <section class="statline">
+      <div class="stat"><b>{{ overview.total }}</b><span>管道总数</span></div>
+      <div class="stat"><b>{{ overview.skipped_count }}</b><span>跳过数</span></div>
+      <div class="stat"><b>{{ overview.rollback_count }}</b><span>回滚次数</span></div>
+      <div class="stat"><b>{{ overview.idem_conflicts }}</b><span>幂等冲突</span></div>
+      <div class="stat wide"><b>{{ overview.policy_label || "未设置" }}</b><span>策略名</span></div>
+    </section>
+
     <div class="board">
       <section class="panel">
-        <h2>管道列表</h2>
+        <h2>管道总览</h2>
+        <p class="muted">
+          已落库 {{ overview.loaded }} · 待加载 {{ overview.ready }} · 整批回滚 {{ overview.aborted_count }}
+          <span v-if="overview.policy_set_on"> · 策略锁定于 {{ overview.policy_set_on }}</span>
+        </p>
         <div v-if="!items.length" class="empty">暂无管道</div>
         <div
           v-for="p in items"
@@ -33,6 +46,7 @@
           <span class="tag" :class="tagClass(p.status)">{{ p.status }}</span>
         </div>
       </section>
+
       <section class="panel">
         <h2>管道详情</h2>
         <div v-if="!current" class="empty">点左侧一条查看抽取与落库状态</div>
@@ -43,11 +57,110 @@
           <p class="kv"><b>状态</b><span class="tag" :class="tagClass(current.status)">{{ current.status }}</span></p>
           <p class="kv"><b>已抽取</b>{{ current.extracted }}</p>
           <p class="kv"><b>已落库</b>{{ current.loaded }}</p>
+          <p class="kv"><b>批次令牌</b><span class="code">{{ current.batch_token || "—" }}</span></p>
+
           <div class="actions">
             <button @click="extract" :disabled="busy">执行抽取</button>
+          </div>
+
+          <div class="field">
+            <label>幂等键<input v-model="idemKey" placeholder="本次落库的幂等键，不能为空" /></label>
+            <p class="muted">当前口径：{{ overview.policy_label || "尚未锁定，禁止落库" }}</p>
             <button class="ghost" @click="load" :disabled="busy">执行落库</button>
           </div>
-          <p v-if="msg" class="muted">{{ msg }}</p>
+
+          <div class="field">
+            <label>回滚原因<input v-model="rollbackReason" placeholder="回滚必须填写原因" /></label>
+            <p class="muted">回滚需由落库操作人以外的复核人执行，且回滚进行中禁止再次落库</p>
+            <button class="ghost" @click="rollback" :disabled="busy">执行回滚</button>
+          </div>
+
+          <p v-if="msg" class="msg" :class="msgKind">{{ msg }}</p>
+        </template>
+      </section>
+    </div>
+
+    <div class="board lower">
+      <section class="panel">
+        <h2>幂等设置</h2>
+        <p class="muted" v-if="policyLocked">当日策略已锁定：{{ policy.policy.label }}。写完当日不得改弦。</p>
+        <p class="muted" v-else>今日尚未锁定；重复幂等键只允许锁定一种处理方式。</p>
+        <div class="field">
+          <label>处理方式
+            <select v-model="policyForm.policy" :disabled="policyLocked">
+              <option v-for="c in policyChoices" :key="c.value" :value="c.value">{{ c.label }}</option>
+            </select>
+          </label>
+          <label>口径说明
+            <textarea v-model="policyForm.description" rows="3" :disabled="policyLocked"
+              placeholder="写清重复键怎么处理，例如：遇重复幂等键跳过并计数"></textarea>
+          </label>
+          <button @click="savePolicy" :disabled="policyLocked">锁定当日口径</button>
+        </div>
+        <p v-if="policy.description" class="muted">说明：{{ policy.description }}（{{ policy.set_by }} · 锁定于 {{ policy.set_on }}）</p>
+        <p class="muted">切换账号复核：admin（落库操作员） / reviewer（回滚复核员）。</p>
+      </section>
+
+      <section class="panel">
+        <h2>幂等键板</h2>
+        <div v-if="!keys.length" class="empty">暂无幂等键记录</div>
+        <div v-for="k in keys" :key="k.id" class="row keyrow">
+          <div>
+            <div class="code">{{ k.idem_key }}</div>
+            <div class="code">{{ k.pipeline_title }} · {{ k.operator }} · 批次 {{ k.batch_token }}</div>
+          </div>
+          <div class="keymeta">
+            <span class="tag" :class="k.outcome === 'loaded' && !k.rolled_back ? 'ok' : 'warn'">
+              {{ k.outcome_label }}{{ k.rolled_back ? "·已回滚" : "" }}
+            </span>
+            <span class="code">跳过 {{ k.skipped_times }}</span>
+          </div>
+        </div>
+      </section>
+    </div>
+
+    <div class="board lower">
+      <section class="panel">
+        <h2>回滚单据</h2>
+        <div v-if="!rollbacks.length" class="empty">暂无回滚单据</div>
+        <div v-for="r in rollbacks" :key="r.id" class="row">
+          <div>
+            <div>#{{ r.id }} · {{ r.pipeline_title }}</div>
+            <div class="code">{{ r.mode }} · {{ r.reason }}</div>
+            <div class="code">批次 #{{ r.load_batch_id || "—" }} · {{ r.operator }} · 恢复为 {{ r.restored_status }} / {{ r.restored_loaded }}</div>
+          </div>
+          <span class="tag" :class="r.status === '已完成' ? 'ok' : 'warn'">{{ r.status }}</span>
+        </div>
+      </section>
+
+      <section class="panel">
+        <h2>落库批次与抢占记录</h2>
+        <div v-if="!current" class="empty">选中一条管道后显示其批次、抢占与幂等事件</div>
+        <template v-else>
+          <div v-if="!ledgerRows.length" class="empty">该管道暂无批次记录</div>          <div v-for="b in current.ledger.batches" :key="'b' + b.id" class="row">
+            <div>
+              <div>批次 #{{ b.id }} · {{ b.batch_token }}</div>
+              <div class="code">键 {{ b.idem_key }} · {{ b.policy_label }}</div>
+            </div>
+            <span class="tag" :class="b.outcome === 'loaded' && !b.rolled_back ? 'ok' : 'warn'">
+              {{ b.outcome_label }}{{ b.rolled_back ? "·已回滚" : "" }}
+            </span>
+          </div>
+          <p class="muted" v-if="current.ledger.claims.length">抢占：</p>
+          <div v-for="c in current.ledger.claims" :key="'c' + c.id" class="row">
+            <div class="code">{{ c.batch_token }}</div>
+            <div class="code">{{ c.operator }} · 键 {{ c.idem_key }} · {{ c.claimed_at }}{{ c.released_at ? " · 已释放" : "" }}</div>
+          </div>
+          <p class="muted" v-if="current.ledger.rollbacks.length">回滚单：</p>
+          <div v-for="r in current.ledger.rollbacks" :key="'r' + r.id" class="row">
+            <div class="code">#{{ r.id }} · {{ r.mode }} · 批次 #{{ r.load_batch_id || "—" }}</div>
+            <div class="code">{{ r.reason }} · {{ r.operator }} · {{ r.status }}</div>
+          </div>
+          <p class="muted" v-if="current.ledger.events.length">幂等事件：</p>
+          <div v-for="e in current.ledger.events" :key="'e' + e.id" class="row">
+            <div class="code">{{ e.kind }} · {{ e.actor }}</div>
+            <div class="code">{{ e.detail }}</div>
+          </div>
         </template>
       </section>
     </div>

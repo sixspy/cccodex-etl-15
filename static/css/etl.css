@@ -130,3 +130,48 @@ button.ghost {
 .kv { margin: 0.35rem 0; }
 .kv b { display: inline-block; min-width: 5.5rem; color: var(--muted); font-weight: 600; }
 .empty { color: var(--muted); padding: 1rem 0; }
+
+.statline {
+  display: flex;
+  gap: 0.6rem;
+  flex-wrap: wrap;
+  margin-bottom: 1rem;
+}
+.stat {
+  flex: 1 1 100px;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 0.6rem 0.8rem;
+}
+.stat b { display: block; font-size: 1.2rem; color: var(--accent); }
+.stat span { font-size: 0.8rem; color: var(--muted); }
+.stat.wide { flex: 2 1 180px; }
+.stat.wide b { font-size: 1rem; }
+
+.board.lower { margin-top: 1rem; }
+.field {
+  margin-top: 0.8rem;
+  padding-top: 0.6rem;
+  border-top: 1px dashed var(--line);
+}
+.field label { font-size: 0.85rem; color: var(--muted); }
+.field textarea,
+.field select {
+  display: block;
+  width: 100%;
+  margin-top: 0.3rem;
+  padding: 0.45rem 0.55rem;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: #fff;
+  color: var(--ink);
+  font-family: inherit;
+}
+.field button { margin-top: 0.5rem; }
+.msg { margin-top: 0.7rem; font-size: 0.88rem; }
+.msg.ok { color: var(--ok); }
+.msg.warn { color: var(--warn); }
+.msg.err { color: #9b1c1c; }
+.keyrow { align-items: center; }
+.keymeta { display: flex; flex-direction: column; gap: 0.2rem; align-items: flex-end; }
