@@ -1,0 +1,12 @@
+{
+  "label": "etl-15",
+  "port": 6140,
+  "login_url": "http://127.0.0.1:6140/login",
+  "http_status": 200,
+  "checks": [
+    "含登录相关文案",
+    "含密码表单线索"
+  ],
+  "passed": true,
+  "checked_at": "2026-11-14T10:54:27+08:00"
+}
